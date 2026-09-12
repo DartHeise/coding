@@ -1,1 +1,248 @@
 
+import requests
+import time
+import re
+import urllib3
+
+
+# Отключаем предупреждения для сайтов с verify_ssl=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+sites = [
+    {
+        "name": "Site 1",
+        "url": "https://example.com/login",
+        "enabled": True,
+        "timeout": 10,
+        "verify_ssl": False,
+
+        # Все эти признаки должны присутствовать
+        "required_markers": [
+            "password"
+        ],
+
+        # Достаточно найти хотя бы один
+        "optional_markers": [
+            "login",
+            "sign in",
+            "войти"
+        ]
+    },
+
+    {
+        "name": "Site 2",
+        "url": "https://example.org/auth",
+        "enabled": True,
+        "timeout": 10,
+        "verify_ssl": True,
+
+        "required_markers": [
+            "password"
+        ],
+
+        "optional_markers": [
+            "username",
+            "login"
+        ]
+    },
+
+    {
+        "name": "Site 3",
+        "url": "https://example.net/",
+        "enabled": True,
+        "timeout": 15,
+        "verify_ssl": False,
+
+        "required_markers": [
+            "password"
+        ],
+
+        "optional_markers": [
+            "sign in",
+            "log in"
+        ]
+    }
+]
+
+
+def check_site(site):
+    start = time.time()
+
+    result = {
+        "name": site["name"],
+        "status": "UNKNOWN",
+        "http": "-",
+        "time": "-",
+        "url": site["url"],
+        "final_url": "-",
+        "message": ""
+    }
+
+    if not site.get("enabled", True):
+        result["status"] = "SKIP"
+        result["message"] = "Проверка отключена"
+        return result
+
+    try:
+        response = requests.get(
+            site["url"],
+            timeout=site.get("timeout", 10),
+            verify=site.get("verify_ssl", True),
+            allow_redirects=True,
+            headers={
+                "User-Agent": "Mozilla/5.0 PanelMonitor/1.0",
+                "Cache-Control": "no-cache"
+            }
+        )
+
+        elapsed = round(time.time() - start, 2)
+
+        result["http"] = str(response.status_code)
+        result["time"] = str(elapsed) + " s"
+        result["final_url"] = response.url
+
+        # Проверяем HTTP-код
+        if response.status_code != 200:
+            result["status"] = "FAIL"
+            result["message"] = (
+                "Неожиданный HTTP-код: "
+                + str(response.status_code)
+            )
+            return result
+
+        html = response.text
+        html_lower = html.lower()
+
+        # Проверяем обязательные маркеры
+        missing_required = []
+
+        for marker in site.get("required_markers", []):
+            if marker.lower() not in html_lower:
+                missing_required.append(marker)
+
+        if missing_required:
+            result["status"] = "FAIL"
+            result["message"] = (
+                "Не найдены обязательные маркеры: "
+                + ", ".join(missing_required)
+            )
+            return result
+
+        # Проверяем дополнительные маркеры
+        optional_markers = site.get("optional_markers", [])
+
+        if optional_markers:
+            found_optional = []
+
+            for marker in optional_markers:
+                if marker.lower() in html_lower:
+                    found_optional.append(marker)
+
+            if not found_optional:
+                result["status"] = "FAIL"
+                result["message"] = (
+                    "Не найден ни один дополнительный маркер: "
+                    + ", ".join(optional_markers)
+                )
+                return result
+
+        result["status"] = "OK"
+        result["message"] = "Форма входа найдена"
+
+        return result
+
+    except requests.exceptions.SSLError as e:
+        result["status"] = "FAIL"
+        result["message"] = "SSL ошибка: " + str(e)
+
+    except requests.exceptions.ConnectTimeout:
+        result["status"] = "FAIL"
+        result["message"] = "Таймаут подключения"
+
+    except requests.exceptions.ReadTimeout:
+        result["status"] = "FAIL"
+        result["message"] = "Таймаут получения ответа"
+
+    except requests.exceptions.ConnectionError as e:
+        result["status"] = "FAIL"
+        result["message"] = "Ошибка соединения: " + str(e)
+
+    except requests.exceptions.RequestException as e:
+        result["status"] = "FAIL"
+        result["message"] = "Ошибка HTTP: " + str(e)
+
+    except Exception as e:
+        result["status"] = "FAIL"
+        result["message"] = "Ошибка: " + str(e)
+
+    result["time"] = str(round(time.time() - start, 2)) + " s"
+
+    return result
+
+
+# Запускаем проверки
+results = []
+
+for site in sites:
+    results.append(check_site(site))
+
+
+# Вывод таблицы
+headers = [
+    "Сайт",
+    "Статус",
+    "HTTP",
+    "Время",
+    "Результат"
+]
+
+
+rows = []
+
+for result in results:
+    rows.append([
+        result["name"],
+        result["status"],
+        result["http"],
+        result["time"],
+        result["message"]
+    ])
+
+
+widths = []
+
+for i in range(len(headers)):
+    max_width = len(headers[i])
+
+    for row in rows:
+        max_width = max(
+            max_width,
+            len(str(row[i]))
+        )
+
+    widths.append(max_width)
+
+
+def print_row(row):
+    values = []
+
+    for i, value in enumerate(row):
+        values.append(
+            str(value).ljust(widths[i])
+        )
+
+    print(" | ".join(values))
+
+
+print_row(headers)
+
+print(
+    "-+-".join(
+        "-" * width
+        for width in widths
+    )
+)
+
+for row in rows:
+    print_row(row)
