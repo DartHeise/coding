@@ -1,5 +1,6 @@
+```bash
 #!/usr/bin/env bash
-set -uo pipefail
+set -u
 
 HOSTS=(
   k8s-node-1
@@ -10,28 +11,36 @@ HOSTS=(
 KEY="$HOME/.ssh/my_private_key"
 KNOWN_HOSTS="$HOME/.ssh/my_known_hosts"
 REMOTE_USER="user"
+OUTPUT="./kesl_status_all.txt"
+
+# Начать новый файл результатов
+: > "$OUTPUT"
 
 for host in "${HOSTS[@]}"; do
-  output="./${host}_kesl_status.txt"
-  tmp="${output}.tmp"
+  {
+    echo "========================================"
+    echo "Хост: $host"
+    echo "Дата: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "========================================"
 
-  echo "Проверка ${host}..."
+    if ssh \
+      -i "$KEY" \
+      -o UserKnownHostsFile="$KNOWN_HOSTS" \
+      -o StrictHostKeyChecking=yes \
+      -o BatchMode=yes \
+      -T \
+      "${REMOTE_USER}@${host}" \
+      "sudo -n systemctl status kesl --no-pager" 2>&1
+    then
+      echo "Результат: SSH-команда завершилась успешно"
+    else
+      rc=$?
+      echo "Результат: ошибка, код завершения $rc"
+    fi
 
-  if ssh \
-    -i "$KEY" \
-    -o UserKnownHostsFile="$KNOWN_HOSTS" \
-    -o StrictHostKeyChecking=yes \
-    -o BatchMode=yes \
-    -T \
-    "${REMOTE_USER}@${host}" \
-    "sudo -n systemctl status kesl --no-pager" \
-    > "$tmp" 2>&1
-  then
-    mv -- "$tmp" "$output"
-    echo "Результат сохранён: $output"
-  else
-    rc=$?
-    mv -- "$tmp" "$output"
-    echo "Команда завершилась с кодом $rc на ${host}. Вывод: $output" >&2
-  fi
+    echo
+  } >> "$OUTPUT"
 done
+
+echo "Все результаты сохранены в $OUTPUT"
+```
